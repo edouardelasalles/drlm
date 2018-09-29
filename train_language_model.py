@@ -2,7 +2,7 @@ import configargparse
 import os
 import json
 import random
-from collections import defaultdict
+from collections import defaultdict, OrderedDict
 
 from tqdm import tqdm, trange
 
@@ -31,7 +31,7 @@ def evaluate(model, dataloader, opt):
                                ignore_index=opt.padding_idx, reduction='sum').item()
         ntkn += target.ne(opt.padding_idx).sum().item()
     nll /= ntkn
-    return perplexity(nll)
+    return nll, perplexity(nll), ntkn
 
 
 def main(opt):
@@ -61,21 +61,33 @@ def main(opt):
     # dataloader
     train_loader = Iterator(trainset, opt.batch_size, repeat=False, sort_within_batch=True, device=device)
     val_loader = BucketIterator(valset, opt.batch_size, train=False, device=device)
-    test_loader = BucketIterator(testset, opt.batch_size, train=False, device=device)
+    ts_tests = sorted(list(set([ex.timestep for ex in testset])))
+    test_loaders = []
+    if opt.mode == 'prediction':
+        test_loaders.append((ts_tests[0] - 1, val_loader))
+    for t in ts_tests:
+        test_t = Dataset(testset.examples, testset.fields, filter_pred=lambda x: x.timestep == t)
+        test_t.sort_key = lambda x: len(x.text)
+        test_t_loader = BucketIterator(test_t, opt.batch_size, train=False, device=device)
+        test_loaders.append((t, test_t_loader))
+    test_loaders = OrderedDict(test_loaders)
     # opt
     opt.ntoken = corpus.vocab_size
     opt.padding_idx = corpus.pad_idx
     opt.nts_train = max(ex.timestep for ex in trainset) + 1
     opt.nwords_train = sum(len(ex.text) for ex in trainset)
     # log opt
+    opt.xproot = os.path.join(opt.xproot, opt.name)
     if not os.path.isdir(opt.xproot):
         os.makedirs(opt.xproot)
+    print('Experiment directory: {}'.format(opt.xproot))
     with open(os.path.join(opt.xproot, 'config.json'), 'w') as f:
         json.dump(opt, f, sort_keys=True, indent=4)
 
     ##################################################################################################################
     # Model
     ##################################################################################################################
+    print('Building model...')
     model = DynamicRecurrentLanguageModel(opt.ntoken, opt.nwe, opt.nhid_rnn, opt.nlayers_rnn, opt.dropoute,
                                           opt.dropouti, opt.dropoutl, opt.dropouth, opt.dropouto, opt.tie_weights,
                                           opt.nts_train, opt.nzt, opt.nhid_zt, opt.nlayers_zt, opt.res_zt,
@@ -90,6 +102,7 @@ def main(opt):
     ##################################################################################################################
     # Trainning
     ##################################################################################################################
+    print('Training...')
     pb = trange(opt.nepoch, ncols=0)
     try:
         for e in pb:
@@ -109,17 +122,37 @@ def main(opt):
                 optimizer.step()
             model.eval()
             with torch.no_grad():
-                ppl_eval = evaluate(model, val_loader, opt)
-                ppl_test = evaluate(model, test_loader, opt)
+                _, ppl_eval, _ = evaluate(model, val_loader, opt)
             lr_scheduler.step(ppl_eval)
             lr = optimizer.param_groups[0]['lr']
             if lr < 1e-7:
                 break
-            pb.set_postfix(loss=loss.item(), ppl_eval=ppl_eval, ppl_test=ppl_test, lr=lr)
+            pb.set_postfix(loss=loss.item(), ppl_eval=ppl_eval, lr=lr)
     except KeyboardInterrupt:
         pass
     pb.close()
-    print('Should save model here...')
+    print('Evaluating...')
+    ntkn_test = 0
+    nlls = []
+    ppls = []
+    model.eval()
+    with torch.no_grad():
+        for t, loader in test_loaders.items():
+            nll, ppl, ntkn = evaluate(model, loader, opt)
+            nlls.append(nll)
+            ppls.append((t, ppl))
+            ntkn_test += ntkn
+    results = [
+        ('epoch', e),
+        ('micro', perplexity(sum(nlls) / ntkn_test)),
+        ('macro', sum(perplexity(nll) for nll in nlls) / len(nlls)),
+    ]
+    results = OrderedDict(results + ppls)
+    print('Saving results...')
+    with open(os.path.join(opt.xproot, 'results.json'), 'w') as f:
+        json.dump(results, f, indent=4)
+    torch.save(model.state_dict(), os.path.join(opt.xproot, 'model.pt'))
+    print('Done')
 
 
 if __name__ == '__main__':

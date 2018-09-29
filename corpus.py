@@ -7,10 +7,6 @@ from torchtext.data import Dataset, Field, Example
 from torchtext.vocab import Vocab
 
 
-def text_len(ex):
-    return len(ex.text)
-
-
 class Corpus(object):
     def __init__(self, data_dir):
         self.data_dir = data_dir
@@ -43,7 +39,7 @@ class Corpus(object):
             ids = f.readlines()
         ids = set([idx.strip() for idx in ids])
         dset = Dataset(self.examples, self.fields, filter_pred=lambda x: x.id in ids)
-        dset.sort_key = text_len
+        dset.sort_key = lambda x: len(x.text)
         return dset
 
     def split(self, mode, min_freq):
@@ -65,6 +61,6 @@ class Corpus(object):
         self.vocab_size = len(self.vocab.itos)
         self.pad_idx = self.vocab.stoi['<pad>']
         # print info
-        print('Number of train examples: {}'.format(len(trainset)))
+        print('Number of training examples: {}'.format(len(trainset)))
         print('Vocab size: {}'.format(self.vocab_size))
         return trainset, valset, testset
