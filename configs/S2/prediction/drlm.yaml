@@ -1,0 +1,22 @@
+# -- language model
+nwe: 400
+nlayers_rnn: 2
+nhid_rnn: 400
+dropoute: 0.2
+dropouti: 0.4
+dropoutl: 0.2
+dropouth: 0.2
+dropouto: 0.5
+tie_weights: true
+wd: 0.00005
+# -- DRLM parameters
+nzt: 10
+learn_transition: true
+nhid_zt: 0
+nlayers_zt: 1
+res_zt: false
+wd_t: 0.0000001
+# -- optim
+lr: 0.003
+lr_decay: 0.1
+patience: 20

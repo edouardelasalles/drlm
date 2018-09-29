@@ -5,7 +5,6 @@ import torch.nn.functional as F
 from modules.rnn import LSTM
 from modules.mlp import MLP
 from modules.embedding import Embedding
-from utils import identity
 
 
 class DynamicRecurrentLanguageModel(nn.Module):
@@ -23,6 +22,7 @@ class DynamicRecurrentLanguageModel(nn.Module):
         # language model modules
         self.word_embedding = Embedding(ntoken, nwe, dropout=dropouti, dropoute=dropoute, padding_idx=self.padding_idx)
         self.word_embedding.weight.data.uniform_(-0.1, 0.1)
+        self.word_embedding.weight.data[self.padding_idx] = 0
         self.lstm = LSTM(nwe + self.nzt, nhid_rnn, nhid_rnn, nlayers_rnn, 0., dropoutl, dropouth, dropouto)
         self.decoder = nn.Linear(nhid_rnn, ntoken)
         self.decoder.bias.data.zero_()
@@ -36,7 +36,7 @@ class DynamicRecurrentLanguageModel(nn.Module):
             self.res = res
         else:
             assert nhid_zt == 0 and nlayers_zt == 0 and res is None
-            self.transition_function = identity
+            self.transition_function = lambda x: x
         self.q_mu = nn.Parameter(torch.Tensor(nts, self.nzt).fill_(0))
         self.q_logvar = nn.Parameter(torch.Tensor(nts, self.nzt).fill_(0))
         self.p_logvar = nn.Parameter(torch.Tensor(1).fill_(0))
@@ -108,7 +108,6 @@ class DynamicRecurrentLanguageModel(nn.Module):
         return elbo
 
     def evaluate(self, text, timestep):
-        nll = 0
         zt = self.predict_zt(max(timestep) + 1)
         output, _ = self.forward(text, zt[timestep])
         return output
