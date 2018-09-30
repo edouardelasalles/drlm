@@ -9,6 +9,7 @@ from lstm_lm import LSTMLanguageModel
 from drlm import DynamicRecurrentLanguageModel
 from dwe import DynamicWordEmbeddingLangaugeModel
 from dt import DiffTimeLanguageModel
+from twe import TemporalWordEmbeddingLanguageModel
 
 
 class DotDict(dict):
@@ -84,12 +85,16 @@ def lm_factory(opt):
         return DiffTimeLanguageModel(opt.ntoken, opt.nwe, opt.nhid_rnn, opt.nlayers_rnn, opt.dropoute, opt.dropouti,
                                      opt.dropoutl, opt.dropouth, opt.dropouto, opt.tie_weights, opt.nts, opt.nhid_t,
                                      opt.padding_idx)
+    elif opt.model == 'twe':
+        return TemporalWordEmbeddingLanguageModel(opt.nts, opt.ntoken, opt.nwe, opt.nhid, opt.nlayers, opt.dropoute,
+                                                  opt.dropouti, opt.dropoutl, opt.dropouth, opt.dropouto,
+                                                  opt.padding_idx)
     else:
         raise ValueError('No model named `{}`'.format(opt.model))
 
 
 def get_lm_optimizers(model, opt):
-    if opt.model in ('lstm', 'dwe', 'dt'):
+    if opt.model in ('lstm', 'dwe', 'dt', 'twe'):
         return model.get_optimizers(opt.lr, opt.wd)
     elif opt.model in ('drlm', 'drlm-id'):
         return model.get_optimizers(opt.lr, opt.wd_lm, opt.wd_t)
@@ -100,5 +105,5 @@ def get_lm_optimizers(model, opt):
 def get_lr(optimizers, opt):
     if opt.model in ('lstm', 'drlm', 'drlm-id', 'dt'):
         return optimizers['adam'].param_groups[0]['lr']
-    elif opt.model == 'dwe':
+    elif opt.model in ('dwe', 'twe'):
         return optimizers['adam_lm'].param_groups[0]['lr']

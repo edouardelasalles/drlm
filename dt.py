@@ -33,10 +33,10 @@ class DiffTimeLanguageModel(nn.Module):
     def forward(self, text, timestep, hidden=None):
         timestep = timestep.float() / self.nts
         # flatten
-        input_flat = text.flatten()
+        text_flat = text.flatten()
         timestep_flat = timestep.unsqueeze(0).expand_as(text).flatten()
         # embeddings
-        embs = self.U(input_flat)
+        embs = self.U(text_flat)
         transfo = self.trans(embs).view(-1, self.nhid_t, self.nhid_t)
         ht = self.tc(timestep_flat.unsqueeze(1))
         vec = transfo.matmul(ht.unsqueeze(2)).squeeze(2)

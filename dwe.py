@@ -49,8 +49,7 @@ class DynamicWordEmbeddingLangaugeModel(nn.Module):
 
     def forward(self, embeddings, hidden=None):
         output, hidden = self.lstm(embeddings, hidden)
-        pred = self.decoder(output)
-        return pred, hidden
+        return self.decoder(output), hidden
 
     def closure(self, text, target, timestep, optimizers):
         optimizer_lm = optimizers['adam_lm']
@@ -58,10 +57,10 @@ class DynamicWordEmbeddingLangaugeModel(nn.Module):
         optimizer_lm.zero_grad()
         optimizer_we.zero_grad()
         # flatten inputs
-        input_flat = text.flatten()
+        text_flat = text.flatten()
         timestep_flat = timestep.unsqueeze(0).expand_as(text).contiguous().flatten()
         # get unique words in text
-        words = input_flat.unique()
+        words = text_flat.unique()
         idx_change = text.new_zeros(self.ntoken)
         idx_change[words] = torch.arange(len(words), device=words.device, dtype=words.dtype)
         # infer embeddings
@@ -69,11 +68,11 @@ class DynamicWordEmbeddingLangaugeModel(nn.Module):
         U_logvar = self.U_logvar(words).view(len(words), self.nts, self.nwe).transpose(0, 1).contiguous()
         U = self._rsample(U_mu, U_logvar)
         # select embs
-        emb = U[timestep_flat, idx_change[input_flat]]
+        emb = U[timestep_flat, idx_change[text_flat]]
         # dropout
         if self.training and self.dropoute > 0.:
             mask = emb.new(self.ntoken).bernoulli_(1 - self.dropoute) / (1 - self.dropoute)
-            mask = mask[input_flat].unsqueeze(1).expand_as(emb)
+            mask = mask[text_flat].unsqueeze(1).expand_as(emb)
             emb = mask * emb
         emb = emb.view(*text.shape, self.nwe)
         # lm
