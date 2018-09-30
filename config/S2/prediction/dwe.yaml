@@ -1,0 +1,18 @@
+# -- language model
+nwe: 400
+nlayers: 2
+nhid: 400
+dropoute: 0.2
+dropouti: 0.0
+dropoutl: 0.2
+dropouth: 0.2
+dropouto: 0.5
+tied_weights: true
+wd: 0.00005
+# -- dwe
+sigma_0: 1
+sigma_t: 0.001
+# -- optim
+lr: 0.003
+lr_decay: 0.1
+patience: 20

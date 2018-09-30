@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from modules.rnn import LSTM
-from modules.mlp import MLP
-from modules.embedding import Embedding
+from module.rnn import LSTM
+from module.mlp import MLP
+from module.embedding import Embedding
 
 
 class DynamicRecurrentLanguageModel(nn.Module):
@@ -21,11 +21,8 @@ class DynamicRecurrentLanguageModel(nn.Module):
         self.padding_idx = padding_idx
         # language model modules
         self.word_embedding = Embedding(ntoken, nwe, dropout=dropouti, dropoute=dropoute, padding_idx=self.padding_idx)
-        self.word_embedding.weight.data.uniform_(-0.1, 0.1)
-        self.word_embedding.weight.data[self.padding_idx] = 0
         self.lstm = LSTM(nwe + self.nzt, nhid_rnn, nhid_rnn, nlayers_rnn, 0., dropoutl, dropouth, dropouto)
         self.decoder = nn.Linear(nhid_rnn, ntoken)
-        self.decoder.bias.data.zero_()
         if self.tied_weights:
             self.decoder.weight = self.word_embedding.weight
         # temporal modules
@@ -40,6 +37,13 @@ class DynamicRecurrentLanguageModel(nn.Module):
         self.q_mu = nn.Parameter(torch.Tensor(nts, self.nzt).fill_(0))
         self.q_logvar = nn.Parameter(torch.Tensor(nts, self.nzt).fill_(0))
         self.p_logvar = nn.Parameter(torch.Tensor(1).fill_(0))
+        # init
+        self._init()
+
+    def _init(self):
+        self.word_embedding.weight.data.uniform_(-0.1, 0.1)
+        self.word_embedding.weight.data[self.padding_idx] = 0
+        self.decoder.bias.data.zero_()
 
     def _rsample(self, mu, logvar):
         if self.training:
@@ -73,26 +77,9 @@ class DynamicRecurrentLanguageModel(nn.Module):
         output, hidden = self.lstm(lstm_input, hidden)
         return self.decoder(output), hidden
 
-    def get_parameters(self, wd_lm, wd_transition):
-        params_lm = list(self.word_embedding.parameters()) + list(self.lstm.parameters())
-        if self.tied_weights:
-            params_lm.append(self.decoder.bias)
-        else:
-            params_lm += list(self.decoder.parameters())
-        params_distrib = [self.q_mu, self.q_logvar, self.p_logvar, self.z0]
-        params = [
-            {'params': params_lm, 'weight_decay': wd_lm, 'betas': (0.0, 0.999)},
-            {'params': params_distrib, 'weight_decay': 0., 'betas': (0.9, 0.999)},
-        ]
-        if self.learn_transition:
-            params.append({'params': self.transition_function.parameters(), 'weight_decay': wd_transition, 'betas': (0.9, 0.999)})
-        # test number paramters
-        nparams = sum(p.nelement() for param_group in params for p in param_group['params'])
-        true_nparams = sum([p.nelement() for p in self.parameters()])
-        assert true_nparams == nparams
-        return params
-
-    def closure(self, text, target, timestep):
+    def closure(self, text, target, timestep, optimizers):
+        optimizer = optimizers['adam']
+        optimizer.zero_grad()
         # latent states
         zt, (q_mu, q_logvar) = self.infer_zt()
         p_mu = self.transition(torch.cat((self.z0, zt[:-1])))
@@ -105,9 +92,37 @@ class DynamicRecurrentLanguageModel(nn.Module):
         kld = 0.5 * kld.sum()
         # rescaled elbo
         elbo = nll + (1 / self.nwords) * kld
-        return elbo
+        # backward
+        elbo.backward()
+        # step
+        optimizer.step()
+        return elbo.item()
 
-    def evaluate(self, text, timestep):
-        zt = self.predict_zt(max(timestep) + 1)
-        output, _ = self.forward(text, zt[timestep])
+    def evaluate(self, text, t):
+        zt = self.predict_zt(t + 1)[t].unsqueeze(0).expand(text.shape[1], self.nzt)
+        output, _ = self.forward(text, zt)
         return output
+
+    def get_optimizers(self, lr, wd_lm, wd_transition):
+        # lm parameters
+        params_lm = list(self.word_embedding.parameters()) + list(self.lstm.parameters())
+        if self.tied_weights:
+            params_lm.append(self.decoder.bias)
+        else:
+            params_lm += list(self.decoder.parameters())
+        # variational parameters
+        params_distrib = [self.q_mu, self.q_logvar, self.p_logvar, self.z0]
+        params = [
+            {'params': params_lm, 'weight_decay': wd_lm, 'betas': (0.0, 0.999)},
+            {'params': params_distrib, 'weight_decay': 0., 'betas': (0.9, 0.999)},
+        ]
+        # trainsition parameters
+        if self.learn_transition:
+            params.append({'params': self.transition_function.parameters(), 'weight_decay': wd_transition, 'betas': (0.9, 0.999)})
+        # test number paramters
+        nparams = sum(p.nelement() for param_group in params for p in param_group['params'])
+        true_nparams = sum([p.nelement() for p in self.parameters()])
+        assert true_nparams == nparams
+        # build optimizer
+        optimizer = torch.optim.Adam(params, lr=lr, eps=1e-9)
+        return {'adam': optimizer}

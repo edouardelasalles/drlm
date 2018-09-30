@@ -2,8 +2,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from modules.rnn import LSTM
-from modules.embedding import Embedding
+from module.rnn import LSTM
+from module.embedding import Embedding
 
 
 class LSTMLanguageModel(nn.Module):
@@ -29,14 +29,22 @@ class LSTMLanguageModel(nn.Module):
         output, hidden = self.lstm(emb, hidden)
         return self.decoder(output), hidden
 
-    def get_parameters(self, wd):
-        return [{'params': self.parameters(), 'weight_decay': wd, 'betas': (0.0, 0.999)}]
+    def get_optimizers(self, lr, wd):
+        optimizer = torch.optim.Adam(self.parameters(), lr=lr, betas=(0.0, 0.999), eps=1e-9, weight_decay=wd)
+        return {'adam': optimizer}
 
-    def closure(self, text, target, timestep):
+    def closure(self, text, target, timestep, optimizers):
+        optimizer = optimizers['adam']
+        optimizer.zero_grad()
+        # forward
         output, _ = self.forward(text)
         nll = F.cross_entropy(output.view(-1, self.ntoken), target.view(-1), ignore_index=self.padding_idx)
-        return nll
+        # backward
+        nll.backward()
+        # step
+        optimizer.step()
+        return nll.item()
 
-    def evaluate(self, text, timestep):
+    def evaluate(self, text, t):
         output, _ = self.forward(text)
         return output

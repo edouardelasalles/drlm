@@ -12,20 +12,6 @@ from torch.nn import Parameter
 # https://github.com/salesforce/awd-lstm-lm/
 
 
-class LockedDropout(nn.Module):
-    def __init__(self, dropout=0.5):
-        super().__init__()
-        self.dropout = dropout
-
-    def forward(self, x):
-        if not self.training or self.dropout <= 0:
-            return x
-        m = x.new(1, x.size(1), x.size(2)).bernoulli_(1 - self.dropout)
-        mask = m / (1 - self.dropout)
-        mask = mask.expand_as(x)
-        return mask * x
-
-
 class WeightDrop(nn.Module):
     def __init__(self, module, weights, dropout=0, variational=False):
         super(WeightDrop, self).__init__()

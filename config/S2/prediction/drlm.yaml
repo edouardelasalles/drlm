@@ -7,8 +7,8 @@ dropouti: 0.4
 dropoutl: 0.2
 dropouth: 0.2
 dropouto: 0.5
-tie_weights: true
-wd: 0.00005
+tied_weights: true
+wd_lm: 0.00005
 # -- DRLM parameters
 nzt: 10
 learn_transition: true

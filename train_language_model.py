@@ -2,7 +2,7 @@ import configargparse
 import os
 import json
 import random
-from collections import defaultdict, OrderedDict
+from collections import defaultdict, OrderedDict, Counter
 
 from tqdm import tqdm, trange
 
@@ -11,11 +11,13 @@ import torch.backends.cudnn as cudnn
 from torchtext.data import Iterator, BucketIterator, Dataset
 
 from corpus import Corpus
-from utils import DotDict, perplexity, load_config, lm_factory, evaluate_lm, get_lm_parameters
+from utils import DotDict, load_config, lm_factory, evaluate_lm, evaluate_lm_at_t, get_lm_optimizers, get_lr
 
 
 def main(opt):
+    exit_code = 0
     opt.hostname = os.uname()[1]
+    opt.running = True
     # cudnn
     if opt.device > -1:
         os.environ["CUDA_VISIBLE_DEVICES"] = str(opt.device)
@@ -35,8 +37,8 @@ def main(opt):
     # Data
     ##################################################################################################################
     # load config
-    data_opt = load_config(os.path.join('configs', opt.corpus, opt.config, 'corpus.yaml'))
-    opt = DotDict({**opt, **data_opt})
+    data_opt = load_config(os.path.join('config', opt.corpus, opt.config, 'corpus.yaml'))
+    opt.update(data_opt)
     # load data
     corpus = Corpus(opt.dataroot)
     # split
@@ -57,24 +59,32 @@ def main(opt):
     # opt
     opt.ntoken = corpus.vocab_size
     opt.padding_idx = corpus.pad_idx
-    opt.nts_train = max(ex.timestep for ex in trainset) + 1
-    opt.nwords_train = sum(len(ex.text) for ex in trainset)
+    opt.nts = max(ex.timestep for ex in trainset) + 1
+    opt.nwords = sum(len(ex.text) for ex in trainset)
 
     ##################################################################################################################
     # Model
     ##################################################################################################################
     # load config
-    model_opt = load_config(os.path.join('configs', opt.corpus, opt.config, '{}.yaml'.format(opt.model)))
-    opt = DotDict({**opt, **model_opt})
+    model_opt = load_config(os.path.join('config', opt.corpus, opt.config, '{}.yaml'.format(opt.model)))
+    opt.update(model_opt)
     # buid model
     print('Building model...')
     model = lm_factory(opt).to(device)
+    # pre process
+    if opt.model == 'dwe':
+        vocab = corpus.fields['text'].vocab
+        word_scales = torch.ones(opt.ntoken).to(device)
+        for word, freq in Counter([vocab.itos[vocab.stoi[w]] for ex in trainset for w in ex.text]).items():
+            word_scales[vocab.stoi[word]] = freq
+        model.word_scales = 1 - (1 - (word_scales / opt.nwords)) ** (opt.nwords / len(train_loader))
 
     ##################################################################################################################
     # Optimizer
     ##################################################################################################################
-    optimizer = torch.optim.Adam(get_lm_parameters(model, opt), lr=opt.lr, eps=1e-9)
-    lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=opt.patience, factor=opt.lr_decay)
+    optimizers = get_lm_optimizers(model, opt)
+    lr_schedulers = [torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=opt.patience, factor=opt.lr_decay)
+                     for optimizer in optimizers.values()]
 
     ##################################################################################################################
     # Log
@@ -99,47 +109,37 @@ def main(opt):
                 text = batch.text[0][:-1]
                 target = batch.text[0][1:]
                 timestep = batch.timestep
-                # zero grad
-                optimizer.zero_grad()
                 # closure
-                loss = model.closure(text, target, timestep)
-                # backward
-                loss.backward()
-                # step
-                optimizer.step()
+                loss = model.closure(text, target, timestep, optimizers)
+                break
+            # eval
             model.eval()
             with torch.no_grad():
-                _, ppl_eval, _ = evaluate_lm(model, val_loader, opt)
-            lr_scheduler.step(ppl_eval)
-            lr = optimizer.param_groups[0]['lr']
-            if lr < 1e-7:
+                _, ppl_eval, _ = evaluate_lm_at_t(model, val_loader, opt)
+            # schedule lr
+            for lr_scheduler in lr_schedulers:
+                lr_scheduler.step(ppl_eval)
+            lr = get_lr(optimizers, opt)
+            if lr < 1e-5:
                 break
-            pb.set_postfix(loss=loss.item(), ppl_eval=ppl_eval, lr=lr)
+            # progress bar
+            pb.set_postfix(loss=loss, ppl_eval=ppl_eval, lr=lr)
+            break
     except KeyboardInterrupt:
-        pass
+        exit_code = 130
     pb.close()
     print('Evaluating...')
-    ntkn_test = 0
-    nlls = []
-    ppls = []
-    model.eval()
-    with torch.no_grad():
-        for t, loader in test_loaders.items():
-            nll, ppl, ntkn = evaluate_lm(model, loader, opt)
-            nlls.append(nll)
-            ppls.append((t, ppl))
-            ntkn_test += ntkn
-    results = [
-        ('epoch', e),
-        ('micro', perplexity(sum(nlls) / ntkn_test)),
-        ('macro', sum(perplexity(nll) for nll in nlls) / len(nlls)),
-    ]
-    results = OrderedDict(results + ppls)
+    results = OrderedDict([('epoch', e)])
+    results.update(evaluate_lm(model, test_loaders, opt))
     print('Saving results...')
     with open(os.path.join(opt.xproot, 'results.json'), 'w') as f:
         json.dump(results, f, indent=4)
     torch.save(model.state_dict(), os.path.join(opt.xproot, 'model.pt'))
+    opt.running = False
+    with open(os.path.join(opt.xproot, 'config.json'), 'w') as f:
+        json.dump(opt, f, sort_keys=True, indent=4)
     print('Done')
+    return exit_code
 
 
 if __name__ == '__main__':
