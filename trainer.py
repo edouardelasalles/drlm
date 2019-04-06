@@ -129,7 +129,7 @@ def main(opt):
     model.eval()
     with torch.no_grad():
         results = evaluate_lm(model, test_loaders, opt)
-    for k, v in results:
+    for k, v in results.items():
         print(k, v)
     print('Done')
     return exit_code
