@@ -44,12 +44,23 @@ def main(opt):
     # split
     trainset, valset, testset = corpus.split(opt.config, opt.min_freq)
     # dataloaders
+    # -- train
     train_loader = Iterator(trainset, opt.batch_size, repeat=False, sort_within_batch=True, device=device)
-    val_loader = Iterator(valset, opt.batch_size, train=False, device=device)
+    # -- val
+    ts_val = sorted(list(set([ex.timestep for ex in valset])))
+    val_loaders = []
+    for t in ts_val:
+        val_t = Dataset(valset.examples, valset.fields, filter_pred=lambda x: x.timestep == t)
+        val_t.sort_key = lambda x: len(x.text)
+        val_t_loader = Iterator(val_t, opt.batch_size, train=False, device=device)
+        val_loaders.append((t, val_t_loader))
+    val_loaders = OrderedDict(val_loaders)
+    # -- test
     ts_tests = sorted(list(set([ex.timestep for ex in testset])))
     test_loaders = []
     if opt.config == 'prediction':
-        test_loaders.append((ts_tests[0] - 1, val_loader))
+        for t, loader in val_loaders.items():
+            test_loaders.append((t, loader))
     for t in ts_tests:
         test_t = Dataset(testset.examples, testset.fields, filter_pred=lambda x: x.timestep == t)
         test_t.sort_key = lambda x: len(x.text)
@@ -107,7 +118,7 @@ def main(opt):
             # eval
             model.eval()
             with torch.no_grad():
-                eval_ppls = evaluate_lm(model, test_loaders, opt)
+                eval_ppls = evaluate_lm(model, val_loaders, opt)
                 ppl_eval = eval_ppls['micro']
             # schedule lr
             for lr_scheduler in lr_schedulers:
