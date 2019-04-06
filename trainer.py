@@ -95,16 +95,6 @@ def main(opt):
                      for optimizer in optimizers.values()]
 
     ##################################################################################################################
-    # Log
-    ##################################################################################################################
-    opt.xproot = os.path.join(opt.xproot, opt.corpus, opt.config, opt.model, opt.name)
-    if not os.path.isdir(opt.xproot):
-        os.makedirs(opt.xproot)
-    print('Experiment directory: {}'.format(opt.xproot))
-    with open(os.path.join(opt.xproot, 'config.json'), 'w') as f:
-        json.dump(opt, f, sort_keys=True, indent=4)
-
-    ##################################################################################################################
     # Trainning
     ##################################################################################################################
     print('Training...')
@@ -136,15 +126,11 @@ def main(opt):
         exit_code = 130
     pb.close()
     print('Evaluating...')
-    results = OrderedDict([('epoch', e)])
-    results.update(evaluate_lm(model, test_loaders, opt))
-    print('Saving results...')
-    with open(os.path.join(opt.xproot, 'results.json'), 'w') as f:
-        json.dump(results, f, indent=4)
-    torch.save(model.state_dict(), os.path.join(opt.xproot, 'model.pt'))
-    opt.running = False
-    with open(os.path.join(opt.xproot, 'config.json'), 'w') as f:
-        json.dump(opt, f, sort_keys=True, indent=4)
+    model.eval()
+    with torch.no_grad():
+        results = evaluate_lm(model, test_loaders, opt)
+    for k, v in results:
+        print(k, v)
     print('Done')
     return exit_code
 
@@ -155,7 +141,6 @@ if __name__ == '__main__':
     p.add('--corpus', required=True, type=str, help='Corpus name')
     p.add('--config', required=True, type=str, help='Evaluation configuration: prediction | modeling')
     p.add('--model', required=True, type=str, help='Model name: lstm | drlm')
-    p.add('--xproot', type=str, default='/local/delasalles/xp/drlm', help='Base saving directory')
     p.add('--name', type=str, default='xp', help='Name of the experiment')
     p.add('--batch_size', type=int, default=64)
     p.add('--nepoch', type=int, default=1000)

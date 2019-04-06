@@ -31,15 +31,15 @@ def evaluate_lm(model, loaders, opt):
     assert not model.training
     nlls = []
     ppls = []
-    ntkn_test = 0
+    ntkns = []
     for t, loader in loaders.items():
         nll, ppl, ntkn = evaluate_lm_at_t(model, loader, opt)
         nlls.append(nll)
         ppls.append((t, ppl))
-        ntkn_test += ntkn
+        ntkns.append(ntkn)
     results = [
-        ('micro', perplexity(sum(nlls) / ntkn_test)),
-        ('macro', sum(perplexity(nll) for nll in nlls) / len(nlls)),
+        ('micro', perplexity(sum(nlls) / sum(ntkn_test))),
+        ('macro', sum(perplexity(nll / ntkn) for nll, ntkn in zip(nlls, ntkns)) / len(nlls)),
     ]
     return OrderedDict(results + ppls)
 
