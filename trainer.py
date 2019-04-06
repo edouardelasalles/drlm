@@ -104,7 +104,6 @@ def main(opt):
                 timestep = batch.timestep
                 # closure
                 loss = model.closure(text, target, timestep, optimizers, opt)
-                break
             # eval
             model.eval()
             with torch.no_grad():
@@ -118,7 +117,6 @@ def main(opt):
                 break
             # progress bar
             pb.set_postfix(loss=loss, ppl_eval=ppl_eval, lr=lr)
-            break
     except KeyboardInterrupt:
         exit_code = 130
     pb.close()
