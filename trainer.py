@@ -72,6 +72,10 @@ def main(opt):
     opt.padding_idx = corpus.pad_idx
     opt.nts = max(ex.timestep for ex in trainset) + 1
     opt.nwords = sum(len(ex.text) for ex in trainset)
+    # print info
+    print('Vocab size: {}'.format(opt.ntoken))
+    print('Number of training documents: {}'.format(len(trainset)))
+    print('Number of training tokens: {}'.format(opt.nwords))
 
     ##################################################################################################################
     # Model

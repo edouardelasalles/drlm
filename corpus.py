@@ -60,7 +60,4 @@ class Corpus(object):
         self.vocab = self.fields['text'].vocab
         self.vocab_size = len(self.vocab.itos)
         self.pad_idx = self.vocab.stoi['<pad>']
-        # print info
-        print('Number of training examples: {}'.format(len(trainset)))
-        print('Vocab size: {}'.format(self.vocab_size))
         return trainset, valset, testset
