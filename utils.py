@@ -38,7 +38,7 @@ def evaluate_lm(model, loaders, opt):
         ppls.append((t, ppl))
         ntkns.append(ntkn)
     results = [
-        ('micro', perplexity(sum(nlls) / sum(ntkn_test))),
+        ('micro', perplexity(sum(nlls) / sum(ntkns))),
         ('macro', sum(perplexity(nll / ntkn) for nll, ntkn in zip(nlls, ntkns)) / len(nlls)),
     ]
     return OrderedDict(results + ppls)
