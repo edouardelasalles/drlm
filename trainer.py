@@ -8,7 +8,7 @@ from tqdm import tqdm, trange
 
 import torch
 import torch.backends.cudnn as cudnn
-from torchtext.data import Iterator, BucketIterator, Dataset
+from torchtext.data import Iterator, Dataset
 
 from corpus import Corpus
 from utils import DotDict, load_config, lm_factory, evaluate_lm, evaluate_lm_at_t, get_lm_optimizers, get_lr
@@ -45,7 +45,7 @@ def main(opt):
     trainset, valset, testset = corpus.split(opt.config, opt.min_freq)
     # dataloaders
     train_loader = Iterator(trainset, opt.batch_size, repeat=False, sort_within_batch=True, device=device)
-    val_loader = BucketIterator(valset, opt.batch_size, train=False, device=device)
+    val_loader = Iterator(valset, opt.batch_size, train=False, device=device)
     ts_tests = sorted(list(set([ex.timestep for ex in testset])))
     test_loaders = []
     if opt.config == 'prediction':
@@ -53,7 +53,7 @@ def main(opt):
     for t in ts_tests:
         test_t = Dataset(testset.examples, testset.fields, filter_pred=lambda x: x.timestep == t)
         test_t.sort_key = lambda x: len(x.text)
-        test_t_loader = BucketIterator(test_t, opt.batch_size, train=False, device=device)
+        test_t_loader = Iterator(test_t, opt.batch_size, train=False, device=device)
         test_loaders.append((t, test_t_loader))
     test_loaders = OrderedDict(test_loaders)
     # opt
@@ -71,13 +71,6 @@ def main(opt):
     # buid model
     print('Building model...')
     model = lm_factory(opt).to(device)
-    # pre process
-    if opt.model == 'dwe':
-        vocab = corpus.fields['text'].vocab
-        word_scales = torch.ones(opt.ntoken).to(device)
-        for word, freq in Counter([vocab.itos[vocab.stoi[w]] for ex in trainset for w in ex.text]).items():
-            word_scales[vocab.stoi[word]] = freq
-        model.word_scales = 1 - (1 - (word_scales / opt.nwords)) ** (opt.nwords / len(train_loader))
 
     ##################################################################################################################
     # Optimizer
@@ -110,17 +103,18 @@ def main(opt):
                 target = batch.text[0][1:]
                 timestep = batch.timestep
                 # closure
-                loss = model.closure(text, target, timestep, optimizers)
+                loss = model.closure(text, target, timestep, optimizers, opt)
                 break
             # eval
             model.eval()
             with torch.no_grad():
-                _, ppl_eval, _ = evaluate_lm_at_t(model, val_loader, opt)
+                eval_ppls = evaluate_lm(model, test_loaders, opt)
+                ppl_eval = eval_ppls['micro']
             # schedule lr
             for lr_scheduler in lr_schedulers:
                 lr_scheduler.step(ppl_eval)
             lr = get_lr(optimizers, opt)
-            if lr < 1e-5:
+            if lr < 1e-6:
                 break
             # progress bar
             pb.set_postfix(loss=loss, ppl_eval=ppl_eval, lr=lr)

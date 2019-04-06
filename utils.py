@@ -5,11 +5,7 @@ import yaml
 
 import torch.nn.functional as F
 
-from lstm_lm import LSTMLanguageModel
 from drlm import DynamicRecurrentLanguageModel
-from dwe import DynamicWordEmbeddingLangaugeModel
-from dt import DiffTimeLanguageModel
-from twe import TemporalWordEmbeddingLanguageModel
 
 
 class DotDict(dict):
@@ -58,52 +54,32 @@ def evaluate_lm_at_t(model, loader_t, opt):
         target = batch.text[0][1:]
         timesteps = batch.timestep
         timestep = batch.timestep.unique().item()
+        ntkn += target.ne(opt.padding_idx).sum().item()
         # forward
         output = model.evaluate(text, timestep)
         # eval
         nll += F.cross_entropy(output.view(-1, opt.ntoken), target.view(-1),
                                ignore_index=opt.padding_idx, reduction='sum').item()
-        ntkn += target.ne(opt.padding_idx).sum().item()
-    nll /= ntkn
-    return nll, perplexity(nll), ntkn
+    return nll, perplexity(nll / ntkn), ntkn
 
 
 def lm_factory(opt):
-    if opt.model == 'lstm':
-        return LSTMLanguageModel(opt.ntoken, opt.nwe, opt.nhid, opt.nlayers, opt.dropoute, opt.dropouti, opt.dropoutl,
-                                 opt.dropouth, opt.dropouto, opt.tied_weights, opt.padding_idx)
-    elif opt.model in ('drlm', 'drlm-id'):
+    if opt.model in ('drlm', 'drlm-id'):
         return DynamicRecurrentLanguageModel(opt.ntoken, opt.nwe, opt.nhid_rnn, opt.nlayers_rnn, opt.dropoute,
                                              opt.dropouti, opt.dropoutl, opt.dropouth, opt.dropouto, opt.tied_weights,
-                                             opt.nts, opt.nzt, opt.nhid_zt, opt.nlayers_zt, opt.res_zt,
-                                             opt.learn_transition, opt.padding_idx, opt.nwords)
-    elif opt.model == 'dwe':
-        return DynamicWordEmbeddingLangaugeModel(opt.ntoken, opt.nwe, opt.nhid, opt.nlayers, opt.dropoute,
-                                                 opt.dropouti, opt.dropoutl, opt.dropouth, opt.dropouto, opt.nts,
-                                                 opt.sigma_0, opt.sigma_t, opt.padding_idx, opt.nwords)
-    elif opt.model == 'dt':
-        return DiffTimeLanguageModel(opt.ntoken, opt.nwe, opt.nhid_rnn, opt.nlayers_rnn, opt.dropoute, opt.dropouti,
-                                     opt.dropoutl, opt.dropouth, opt.dropouto, opt.tie_weights, opt.nts, opt.nhid_t,
-                                     opt.padding_idx)
-    elif opt.model == 'twe':
-        return TemporalWordEmbeddingLanguageModel(opt.nts, opt.ntoken, opt.nwe, opt.nhid, opt.nlayers, opt.dropoute,
-                                                  opt.dropouti, opt.dropoutl, opt.dropouth, opt.dropouto,
-                                                  opt.padding_idx)
+                                             opt.nts, opt.nzt, opt.nhid_zt, opt.nlayers_zt, opt.learn_transition,
+                                             opt.padding_idx, opt.nwords)
     else:
         raise ValueError('No model named `{}`'.format(opt.model))
 
 
 def get_lm_optimizers(model, opt):
-    if opt.model in ('lstm', 'dwe', 'dt', 'twe'):
-        return model.get_optimizers(opt.lr, opt.wd)
-    elif opt.model in ('drlm', 'drlm-id'):
-        return model.get_optimizers(opt.lr, opt.wd_lm, opt.wd_t)
+    if opt.model in ('drlm', 'drlm-id'):
+        return model.get_optimizers(opt.lr, opt.wd_lm)
     else:
         raise ValueError('No model named `{}`'.format(opt.model))
 
 
 def get_lr(optimizers, opt):
-    if opt.model in ('lstm', 'drlm', 'drlm-id', 'dt'):
+    if opt.model in ('drlm', 'drlm-id'):
         return optimizers['adam'].param_groups[0]['lr']
-    elif opt.model in ('dwe', 'twe'):
-        return optimizers['adam_lm'].param_groups[0]['lr']

@@ -12,10 +12,12 @@ wd_lm: 0.00005
 # -- DRLM parameters
 nzt: 10
 learn_transition: true
-nhid_zt: 0
-nlayers_zt: 1
-res_zt: false
-wd_t: 0.0000001
+nhid_zt: 32
+nlayers_zt: 2
+beta: 20
+wd_q: 0.001
+wd_res: 0.001
+wd_inertia: 2
 # -- optim
 lr: 0.003
 lr_decay: 0.1
