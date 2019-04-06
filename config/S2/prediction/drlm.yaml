@@ -21,4 +21,4 @@ wd_inertia: 2
 # -- optim
 lr: 0.003
 lr_decay: 0.1
-patience: 25
+patience: 20
