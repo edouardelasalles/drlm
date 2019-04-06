@@ -141,7 +141,6 @@ if __name__ == '__main__':
     p.add('--corpus', required=True, type=str, help='Corpus name')
     p.add('--config', required=True, type=str, help='Evaluation configuration: prediction | modeling')
     p.add('--model', required=True, type=str, help='Model name: lstm | drlm')
-    p.add('--name', type=str, default='xp', help='Name of the experiment')
     p.add('--batch_size', type=int, default=64)
     p.add('--nepoch', type=int, default=1000)
     p.add('--device', type=int, default=-1, help='-1: cpu; > -1: cuda device id')
