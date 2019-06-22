@@ -95,33 +95,51 @@ def main(opt):
                      for optimizer in optimizers.values()]
 
     ##################################################################################################################
+    # Log
+    ##################################################################################################################
+    # opt.xproot = os.path.join(opt.xproot, opt.corpus, opt.config, opt.model, opt.name)
+    # if not os.path.isdir(opt.xproot):
+    #     os.makedirs(opt.xproot)
+    # print('Experiment directory: {}'.format(opt.xproot))
+    # with open(os.path.join(opt.xproot, 'config.json'), 'w') as f:
+    #     json.dump(opt, f, sort_keys=True, indent=4)
+
+    ##################################################################################################################
     # Trainning
     ##################################################################################################################
     print('Training...')
-    pb = trange(opt.nepoch, ncols=0)
+    pb = trange(opt.niter, ncols=0)
+    ppl_eval = None
+    finished = False
     try:
-        for e in pb:
-            model.train()
+        while not finished:
             for batch in train_loader:
-                # inputs
+                model.train()
+                # io
                 text = batch.text[0][:-1]
                 target = batch.text[0][1:]
                 timestep = batch.timestep
                 # closure
                 loss = model.closure(text, target, timestep, optimizers, opt)
-            # eval
-            model.eval()
-            with torch.no_grad():
-                eval_ppls = evaluate_lm(model, val_loaders, opt)
-                ppl_eval = eval_ppls['micro']
-            # schedule lr
-            for lr_scheduler in lr_schedulers:
-                lr_scheduler.step(ppl_eval)
-            lr = get_lr(optimizers, opt)
-            if lr < 1e-6:
-                break
-            # progress bar
-            pb.set_postfix(loss=loss, ppl_eval=ppl_eval, lr=lr)
+                # eval
+                if pb.n % opt.niter_checkpoint == 0:
+                    model.eval()
+                    with torch.no_grad():
+                        eval_ppls = evaluate_lm(model, val_loaders, opt)
+                        ppl_eval = eval_ppls['micro']
+                    # schedule lr
+                    prev_lr = get_lr(optimizers, opt)
+                    for lr_scheduler in lr_schedulers:
+                        lr_scheduler.step(ppl_eval)
+                    lr = get_lr(optimizers, opt)
+                    if lr != prev_lr:
+                        print(f'lr decay {prev_lr} -> {lr} at itr {pb.n} ({loss} / {ppl_eval})')
+                    if lr <= 1e-6:
+                        finished = True
+                        break
+                # progress bar
+                pb.update()
+                pb.set_postfix(loss=loss, ppl_eval=ppl_eval, lr=lr)
     except KeyboardInterrupt:
         exit_code = 130
     pb.close()
@@ -138,11 +156,14 @@ def main(opt):
 if __name__ == '__main__':
     # arguments
     p = configargparse.ArgParser()
+    p.add('--xproot', type=str, default='/local/delasalles/xp/drlm', help='Base saving directory')
     p.add('--corpus', required=True, type=str, help='Corpus name')
     p.add('--config', required=True, type=str, help='Evaluation configuration: prediction | modeling')
     p.add('--model', required=True, type=str, help='Model name: lstm | drlm')
+    p.add('--name', type=str, help='Experiment name')
     p.add('--batch_size', type=int, default=64)
-    p.add('--nepoch', type=int, default=1000)
+    p.add('--niter', type=int, default=1000000)
+    p.add('--niter_checkpoint', type=int, default=200)
     p.add('--device', type=int, default=-1, help='-1: cpu; > -1: cuda device id')
     p.add('--manualSeed', type=int, help='manual seed')
     # parse

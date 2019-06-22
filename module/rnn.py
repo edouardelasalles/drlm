@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from .dropout import WeightDrop
+from .dropout import WeightDropout, LockedDropout
 
 
 # Code inspired from AWD-LSTM :
@@ -18,13 +18,13 @@ class LSTM(nn.Module):
         self.nhid = nhid
         self.nout = nout
         self.nlayers = nlayers
-        self.idrop = nn.Dropout(dropouti)
-        self.ldrop = nn.Dropout(dropoutl)
-        self.odrop = nn.Dropout(dropouto)
+        self.idrop = LockedDropout(dropouti)
+        self.ldrop = LockedDropout(dropoutl)
+        self.odrop = LockedDropout(dropouto)
         # LSTM
         self.rnns = [nn.LSTM(ninp if l == 0 else nhid, nhid if l != nlayers - 1 else nout, 1)
                      for l in range(nlayers)]
-        self.rnns = [WeightDrop(rnn, ['weight_hh_l0'], dropout=dropouth) for rnn in self.rnns]
+        self.rnns = [WeightDropout(rnn, dropouth) for rnn in self.rnns]
         self.rnns = nn.ModuleList(self.rnns)
 
     def forward(self, input, hidden=None):

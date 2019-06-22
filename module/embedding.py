@@ -1,11 +1,13 @@
 import torch.nn as nn
 
+from .dropout import LockedDropout
+
 
 class Embedding(nn.Embedding):
     def __init__(self, num_embeddings, embedding_dim, dropoute=.0, dropout=.0, **kwargs):
         super(Embedding, self).__init__(num_embeddings, embedding_dim, **kwargs)
         self.dropoute = dropoute
-        self.drop = nn.Dropout(dropout)
+        self.drop = LockedDropout(dropout)
         self.weight.data.uniform_(-0.1, 0.1)
         if self.padding_idx is not None:
             self.weight.data[self.padding_idx] = 0

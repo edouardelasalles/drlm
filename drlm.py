@@ -1,3 +1,6 @@
+import math
+from functools import partial
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,9 +11,9 @@ from module.embedding import Embedding
 
 
 class DynamicRecurrentLanguageModel(nn.Module):
-    def __init__(self, ntoken, nwe, nhid_rnn, nlayers_rnn, dropoute, dropouti, dropoutl, dropouth, dropouto, tied_weights,
-                 nts, nzt, nhid_zt, nlayers_zt, learn_transition, padding_idx, nwords):
-        super(DynamicRecurrentLanguageModel, self).__init__()
+    def __init__(self, ntoken, nwe, nhid_rnn, nlayers_rnn, dropoute, dropouti, dropoutl, dropouth, dropouto,
+                 tied_weights, nts, nzt, nhid_zt, nlayers_zt, learn_transition, padding_idx, nwords):
+        super().__init__()
         # attributes
         self.ntoken = ntoken
         self.nts = nts
@@ -32,9 +35,9 @@ class DynamicRecurrentLanguageModel(nn.Module):
         else:
             assert nhid_zt == 0 and nlayers_zt == 0
             self.transition_function = lambda x: x
-        self.q_mu = nn.Parameter(torch.Tensor(nts, self.nzt).fill_(0))
-        self.q_logvar = nn.Parameter(torch.Tensor(nts, self.nzt).fill_(0))
-        self.p_logvar = nn.Parameter(torch.Tensor(1).fill_(0))
+        self.q_mu = nn.Parameter(torch.zeros(nts, self.nzt))
+        self.q_logvar = nn.Parameter(torch.zeros(nts, self.nzt))
+        self.p_logvar = nn.Parameter(torch.zeros(1))
         # init
         self._init()
 
@@ -42,6 +45,9 @@ class DynamicRecurrentLanguageModel(nn.Module):
         self.word_embedding.weight.data.uniform_(-0.1, 0.1)
         self.word_embedding.weight.data[self.padding_idx] = 0
         self.decoder.bias.data.zero_()
+        if self.learn_transition:
+            init_fn = partial(init_weight, init_type='orthogonal', init_gain=0.02)
+            self.transition_function.apply(init_fn)
 
     def _rsample(self, mu, logvar):
         if self.training:
@@ -106,7 +112,7 @@ class DynamicRecurrentLanguageModel(nn.Module):
         loss.backward()
         # step
         optimizer.step()
-        return loss.item()
+        return math.exp(loss.item())
 
     def evaluate(self, text, t):
         z, _ = self.predict_zt(t + 1)
@@ -127,3 +133,25 @@ class DynamicRecurrentLanguageModel(nn.Module):
             {'params': params},
         ], lr=lr)
         return {'adam': optimizer}
+
+
+def init_weight(m, init_type='normal', init_gain=0.02):
+    classname = m.__class__.__name__
+    if classname in ('Conv2d', 'ConvTranspose2d', 'Linear'):
+        if init_type == 'normal':
+            torch.nn.init.normal_(m.weight.data, 0.0, init_gain)
+        elif init_type == 'xavier':
+            torch.nn.init.xavier_normal_(m.weight.data, gain=init_gain)
+        elif init_type == 'kaiming':
+            torch.nn.init.kaiming_normal_(m.weight.data, a=0, mode='fan_in')
+        elif init_type == 'orthogonal':
+            torch.nn.init.orthogonal_(m.weight.data, gain=init_gain)
+        else:
+            raise NotImplementedError('initialization method [%s] is not implemented' % init_type)
+        if hasattr(m, 'bias') and m.bias is not None:
+            torch.nn.init.constant_(m.bias.data, 0.0)
+    elif classname == 'BatchNorm2d':
+        if m.weight is not None:
+            torch.nn.init.normal_(m.weight.data, 1.0, init_gain)
+        if m.bias is not None:
+            torch.nn.init.constant_(m.bias.data, 0.0)

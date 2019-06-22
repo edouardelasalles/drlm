@@ -24,7 +24,7 @@ def perplexity(nll):
 
 def load_config(path):
     with open(path, 'r') as f:
-        return DotDict(yaml.load(f))
+        return DotDict(yaml.safe_load(f))
 
 
 def evaluate_lm(model, loaders, opt):
