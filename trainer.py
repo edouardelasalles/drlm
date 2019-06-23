@@ -11,7 +11,8 @@ import torch.backends.cudnn as cudnn
 from torchtext.data import Iterator, Dataset
 
 from corpus import Corpus
-from utils import DotDict, load_config, lm_factory, evaluate_lm, evaluate_lm_at_t, get_lm_optimizers, get_lr
+from evaluate import evaluate_lm, evaluate_lm_at_t
+from utils import DotDict, load_config, lm_factory, get_lm_optimizers, get_lr
 
 
 def main(opt):
