@@ -21,11 +21,12 @@ def evaluate_lm(model, loaders, opt):
         nlls.append(nll)
         ppls.append((t, ppl))
         ntkns.append(ntkn)
+    micro_ppl = perplexity(sum(nlls) / sum(ntkns))
     results = [
-        ('micro', perplexity(sum(nlls) / sum(ntkns))),
+        ('micro', micro_ppl),
         ('macro', sum(perplexity(nll / ntkn) for nll, ntkn in zip(nlls, ntkns)) / len(nlls)),
     ]
-    return OrderedDict(results + ppls)
+    return micro_ppl, OrderedDict(results + ppls)
 
 
 def evaluate_lm_at_t(model, loader_t, opt):
@@ -40,7 +41,7 @@ def evaluate_lm_at_t(model, loader_t, opt):
         timestep = batch.timestep.unique().item()
         ntkn += target.ne(opt.padding_idx).sum().item()
         # forward
-        output = model.evaluate(text, timestep)
+        output = model.evaluate(text, timestep, opt.from_z0)
         # eval
         nll += F.cross_entropy(output.view(-1, opt.ntoken), target.view(-1),
                                ignore_index=opt.padding_idx, reduction='sum').item()

@@ -4,10 +4,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from module.rnn import LSTM
-from module.mlp import MLP
-from module.embedding import Embedding
-from module.utils import init_weight
+from .module.rnn import LSTM
+from .module.mlp import MLP
+from .module.embedding import Embedding
+from .module.utils import init_weight
 from evaluate import perplexity
 
 
@@ -35,10 +35,9 @@ class DynamicRecurrentLanguageModel(nn.Module):
             self.transition_function = MLP(self.nzt, nhid_zt, self.nzt, nlayers_zt, 0)
         else:
             assert nhid_zt == 0 and nlayers_zt == 0
-            self.transition_function = lambda x: x
         self.q_mu = nn.Parameter(torch.zeros(nts, self.nzt))
         self.q_logvar = nn.Parameter(torch.zeros(nts, self.nzt))
-        self.p_logvar = nn.Parameter(torch.zeros(1))
+        self.p_logvar = nn.Parameter(torch.zeros(1, self.nzt))
         # init
         self._init()
 
@@ -59,26 +58,28 @@ class DynamicRecurrentLanguageModel(nn.Module):
             return mu
 
     def transition(self, zt):
-        zt_next = self.transition_function(zt)
         if self.learn_transition:
-            res = zt_next
-            zt_next = zt + zt_next
+            res = self.transition_function(zt)
+            zt_next = zt + res
             return zt_next, res
-        return zt_next, None
+        return zt, None
 
     def infer_zt(self):
         q_mu, q_logvar = self.q_mu, self.q_logvar
         return self._rsample(q_mu, q_logvar), (q_mu, q_logvar)
 
-    def predict_zt(self, k, z0=None):
-        zt = z0.unsqueeze(0) if z0 is not None else self.z0
+    def predict_zt(self, z0, nt):
+        zt = z0
         states = []
         res = []
-        for _ in range(k):
+        for t in range(nt):
             zt, r = self.transition(zt)
+            if r is not None:
+                res.append(r)
             states.append(zt)
-            res.append(r)
-        return torch.cat(states), torch.cat(states)
+        states = torch.stack(states)
+        res = torch.stack(res) if len(res) > 0 else res
+        return states, res
 
     def forward(self, text, zt, hidden=None):
         emb = self.word_embedding(text)
@@ -86,8 +87,7 @@ class DynamicRecurrentLanguageModel(nn.Module):
         output, hidden = self.lstm(lstm_input, hidden)
         return self.decoder(output), hidden
 
-    def closure(self, text, target, timestep, optimizers, config):
-        optimizer = optimizers['adam']
+    def closure(self, text, target, timestep, optimizer, config):
         optimizer.zero_grad()
         # latent states
         zt, (q_mu, q_logvar) = self.infer_zt()
@@ -97,10 +97,11 @@ class DynamicRecurrentLanguageModel(nn.Module):
         # nll
         nll = F.cross_entropy(output.view(-1, self.ntoken), target.view(-1), ignore_index=self.padding_idx)
         # kl
-        kld = self.p_logvar - q_logvar + (q_logvar.exp() + (q_mu - p_mu)**2) / self.p_logvar.exp() - 1
-        kld = 0.5 * kld.sum()
+        p_logvar = self.p_logvar.expand_as(q_logvar)
+        kld = p_logvar - q_logvar + (q_logvar.exp() + (q_mu - p_mu)**2) / p_logvar.exp() - 1
+        kld = (1 / self.nwords) * 0.5 * kld.sum()
         # rescaled elbo
-        loss = nll + (1 / self.nwords) * config['beta'] * kld
+        loss = nll + config['beta'] * kld
         # regularisation
         if config['wd_q'] > 0:
             loss += config['wd_q'] * q_mu.pow(2).mean()
@@ -113,15 +114,31 @@ class DynamicRecurrentLanguageModel(nn.Module):
         loss.backward()
         # step
         optimizer.step()
-        return perplexity(nll.item())
+        # log
+        log = {}
+        log['loss'] = loss.item()
+        log['nll'] = nll.item()
+        log['kld'] = kld.item()
+        log['elbo'] = log['nll'] + log['kld']
+        log['ppl'] = perplexity(log['nll'])
+        return log
 
-    def evaluate(self, text, t):
-        z, _ = self.predict_zt(t + 1)
-        zt = z[t].unsqueeze(0).expand(text.shape[1], self.nzt)
+    def evaluate(self, text, t, from_z0=False):
+        if from_z0:
+            z_pred, _ = self.predict_zt(self.z0.squeeze(0), t + 1)
+            assert t == z_pred.shape[0] - 1
+            zt = z_pred[-1]
+        else:
+            if t < self.nts:
+                zt = self.q_mu[t]
+            else:
+                z_pred, _ = self.predict_zt(self.q_mu[-1], t + 1 - self.nts)
+                zt = z_pred[-1]
+        zt = zt.unsqueeze(0).expand(text.shape[1], self.nzt)
         output, _ = self.forward(text, zt)
         return output
 
-    def get_optimizers(self, lr, wd):
+    def get_optimizer(self, lr, wd):
         wd_params = []
         params = []
         for name, p in self.named_parameters():
@@ -133,4 +150,4 @@ class DynamicRecurrentLanguageModel(nn.Module):
             {'params': wd_params, 'weight_decay': wd},
             {'params': params},
         ], lr=lr)
-        return {'adam': optimizer}
+        return optimizer

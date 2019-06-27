@@ -1,2 +1,10 @@
+# corpus
 dataroot: data/S2
 min_freq: 3
+
+# meta optim
+batch_size: 64
+niter: 1000000
+niter_checkpoint: 200
+niter_burnin: 0
+min_lr: 0.000001

@@ -9,6 +9,7 @@ dropouth: 0.2
 dropouto: 0.5
 tied_weights: true
 wd_lm: 0.00005
+
 # -- DRLM parameters
 nzt: 10
 learn_transition: true
@@ -18,7 +19,10 @@ beta: 20
 wd_q: 0.001
 wd_res: 0.001
 wd_inertia: 2
+from_z0: false
+
 # -- optim
 lr: 0.003
-lr_decay: 0.1
-patience: 20
+lr_scheduling: linear
+niter_burnin: 37500
+niter_scheduling: 10000

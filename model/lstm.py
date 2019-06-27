@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from module.rnn import LSTM
-from module.embedding import Embedding
+from .module.rnn import LSTM
+from .module.embedding import Embedding
 from evaluate import perplexity
 
 
@@ -37,8 +37,7 @@ class LSTMLanguageModel(nn.Module):
         output, hidden = self.lstm(emb, hidden)
         return self.decoder(output), hidden
 
-    def closure(self, text, target, timestep, optimizers, config):
-        optimizer = optimizers['adam']
+    def closure(self, text, target, timestep, optimizer, config):
         optimizer.zero_grad()
         # language model
         output, _ = self.forward(text)
@@ -50,12 +49,15 @@ class LSTMLanguageModel(nn.Module):
         loss.backward()
         # step
         optimizer.step()
-        return perplexity(nll.item())
+        # logs
+        logs = {}
+        logs['loss'] = loss.item()
+        logs['ppl'] = perplexity(nll.item())
+        return logs
 
-    def evaluate(self, text, t):
+    def evaluate(self, text, *args, **kwargs):
         output, _ = self.forward(text)
         return output
 
-    def get_optimizers(self, lr, wd):
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=wd)
-        return {'adam': optimizer}
+    def get_optimizer(self, lr, wd):
+        return torch.optim.Adam(self.parameters(), lr=lr, weight_decay=wd)

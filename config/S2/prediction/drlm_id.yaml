@@ -10,6 +10,17 @@ dropouto: 0.5
 tied_weights: true
 wd_lm: 0.00005
 
+# -- DRLM parameters
+nzt: 10
+learn_transition: false
+nhid_zt: 0
+nlayers_zt: 0
+beta: 1
+wd_q: 0.001
+wd_res: 0
+wd_inertia: 0
+from_z0: false
+
 # -- optim
 lr: 0.003
 lr_scheduling: linear

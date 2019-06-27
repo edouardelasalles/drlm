@@ -2,6 +2,7 @@ import configargparse
 import os
 import json
 import random
+from functools import partial
 from collections import defaultdict, OrderedDict, Counter
 
 from tqdm import tqdm, trange
@@ -12,7 +13,7 @@ from torchtext.data import Iterator, Dataset
 
 from corpus import Corpus
 from evaluate import evaluate_lm, evaluate_lm_at_t
-from utils import DotDict, load_config, lm_factory, get_lm_optimizers, get_lr
+from utils import DotDict, Logger, load_config, lm_factory, get_lm_optimizer
 
 
 def main(opt):
@@ -75,8 +76,7 @@ def main(opt):
     opt.nwords = sum(len(ex.text) for ex in trainset)
     # print info
     print('Vocab size: {}'.format(opt.ntoken))
-    print('Number of training documents: {}'.format(len(trainset)))
-    print('Number of training tokens: {}'.format(opt.nwords))
+    print(f'{len(trainset)} training documents with {opt.nwords} tokens on {opt.nts} timesteps')
 
     ##################################################################################################################
     # Model
@@ -91,19 +91,28 @@ def main(opt):
     ##################################################################################################################
     # Optimizer
     ##################################################################################################################
-    optimizers = get_lm_optimizers(model, opt)
-    lr_schedulers = [torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=opt.patience, factor=opt.lr_decay)
-                     for optimizer in optimizers.values()]
+    optimizer = get_lm_optimizer(model, opt)
+    if 'lr_scheduling' in opt:
+        if opt.lr_scheduling == 'linear':
+            opt.min_lr == 0
+            opt.niter = opt.niter_burnin + opt.niter_scheduling
+            niter = opt.niter_scheduling
+            lr_scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer,
+                                                             lr_lambda=lambda i: max(0, (niter - i) / niter))
+        if opt.lr_scheduling == 'reduce_on_plateau':
+            assert opt.min_lr > 0
+            lr_scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer,
+                                                                      patience=opt.patience, factor=opt.lr_decay)
+    else:
+        lr_scheduler = None
 
     ##################################################################################################################
     # Log
     ##################################################################################################################
-    # opt.xproot = os.path.join(opt.xproot, opt.corpus, opt.config, opt.model, opt.name)
-    # if not os.path.isdir(opt.xproot):
-    #     os.makedirs(opt.xproot)
-    # print('Experiment directory: {}'.format(opt.xproot))
-    # with open(os.path.join(opt.xproot, 'config.json'), 'w') as f:
-    #     json.dump(opt, f, sort_keys=True, indent=4)
+    opt.xproot = os.path.join(opt.xproot, opt.corpus, opt.config, opt.model, opt.name)
+    print(f'New experiment logged at {opt.xproot}')
+    logger = Logger(opt.xproot)
+    logger.init(opt)
 
     ##################################################################################################################
     # Trainning
@@ -112,59 +121,69 @@ def main(opt):
     pb = trange(opt.niter, ncols=0)
     ppl_eval = None
     finished = False
+    itr = -1
     try:
         while not finished:
             for batch in train_loader:
+                itr += 1
                 model.train()
                 # io
                 text = batch.text[0][:-1]
                 target = batch.text[0][1:]
                 timestep = batch.timestep
                 # closure
-                loss = model.closure(text, target, timestep, optimizers, opt)
+                log_train = model.closure(text, target, timestep, optimizer, opt)
                 # eval
-                if pb.n % opt.niter_checkpoint == 0:
+                if itr > 0 and itr % opt.niter_checkpoint == 0:
                     model.eval()
                     with torch.no_grad():
-                        eval_ppls = evaluate_lm(model, val_loaders, opt)
-                        ppl_eval = eval_ppls['micro']
-                    # schedule lr
-                    prev_lr = get_lr(optimizers, opt)
-                    for lr_scheduler in lr_schedulers:
-                        lr_scheduler.step(ppl_eval)
-                    lr = get_lr(optimizers, opt)
-                    if lr != prev_lr:
-                        print(f'lr decay {prev_lr} -> {lr} at itr {pb.n} ({loss} / {ppl_eval})')
-                    if lr <= 1e-6:
+                        score, log_val = evaluate_lm(model, val_loaders, opt)
+                    # checkpoint
+                    log_train['lr'] = optimizer.param_groups[0]['lr']
+                    logger.log(itr, 'train', log_train)
+                    logger.log(itr, 'val', log_val)
+                    logger.checkpoint(itr)
+                    # reduce_on_plateau lr scheduling
+                    if lr_scheduler and itr >= opt.niter_burnin and opt.lr_scheduling == 'reduce_on_plateau':
+                        lr_scheduler.step(score)
+                    lr = optimizer.param_groups[0]['lr']
+                    if lr < opt.min_lr:
                         finished = True
                         break
-                # progress bar
-                pb.update()
-                pb.set_postfix(loss=loss, ppl_eval=ppl_eval, lr=lr)
+                    # progress bar
+                    pb.update(opt.niter_checkpoint)
+                    pb.set_postfix(chkpt=logger.chkpt, loss=log_train['loss'], score=score, lr=lr)
+                # other lr scheduling
+                if lr_scheduler and itr >= opt.niter_burnin and opt.lr_scheduling != 'reduce_on_plateau':
+                    lr_scheduler.step()
+                lr = optimizer.param_groups[0]['lr']
+                if lr < opt.min_lr:
+                    finished = True
     except KeyboardInterrupt:
         exit_code = 130
     pb.close()
     print('Evaluating...')
     model.eval()
     with torch.no_grad():
-        results = evaluate_lm(model, test_loaders, opt)
-    for k, v in results.items():
-        print(k, v)
-    print('Done')
+        _, log_val = evaluate_lm(model, val_loaders, opt)
+        _, results = evaluate_lm(model, test_loaders, opt)
+    log_train['lr'] = optimizer.param_groups[0]['lr']
+    logger.log(itr, 'train', log_train)
+    logger.log(itr, 'val', log_val)
+    logger.log(itr, 'test', results)
+    logger.checkpoint(itr)
+    logger.terminate(model, optimizer)
     return exit_code
 
 
 if __name__ == '__main__':
     # arguments
     p = configargparse.ArgParser()
-    p.add('--xproot', type=str, default='/local/delasalles/xp/drlm', help='Base saving directory')
+    p.add('--xproot', type=str, default='xp', help='Base saving directory')
     p.add('--corpus', required=True, type=str, help='Corpus name')
     p.add('--config', required=True, type=str, help='Evaluation configuration: prediction | modeling')
     p.add('--model', required=True, type=str, help='Model name: lstm | drlm')
-    p.add('--name', type=str, help='Experiment name')
-    p.add('--batch_size', type=int, default=64)
-    p.add('--niter', type=int, default=1000000)
-    p.add('--niter_checkpoint', type=int, default=200)
+    p.add('--name', type=str, default='debug', help='Experiment name')
     p.add('--device', type=int, default=-1, help='-1: cpu; > -1: cuda device id')
     p.add('--manualSeed', type=int, help='manual seed')
     # parse
